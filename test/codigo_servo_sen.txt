@@ -1,0 +1,82 @@
+#include <Arduino.h>
+#include <ESP32Servo.h>
+
+// Pines
+const int sensorPin = 34; 
+const int servoPin = 27;  
+
+Servo miServo; 
+
+// Configuración del rango físico del sensor solicitado
+const float DIST_MIN = 10.0;
+const float DIST_MAX = 45.0;
+const float DIST_CENTRO = 27.5; // Punto medio exacto del rango útil
+
+// Función para obtener la distancia calibrada mediante filtrado analógico
+float leerDistanciaCM() {
+  long sumaADC = 0;
+  const int muestras = 20;
+
+  for (int i = 0; i < muestras; i++) {
+    sumaADC += analogRead(sensorPin);
+    delay(2); 
+  }
+  
+  float promedioADC = (float)sumaADC / muestras;
+  float voltios = promedioADC * (3.3 / 4096.0);
+  
+  if (voltios < 0.40) voltios = 0.40; 
+
+  float distanciaCm = 29.988 * pow(voltios, -1.173);
+
+  // Acotamos estrictamente al rango de interés del usuario
+  return constrain(distanciaCm, DIST_MIN, DIST_MAX);
+}
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(sensorPin, INPUT);
+  analogSetAttenuation(ADC_11db); 
+
+  // Configuración del PWM para el servomotor
+  ESP32PWM::allocateTimer(0);
+  miServo.setPeriodHertz(50);    
+  miServo.attach(servoPin, 500, 2400); 
+
+  // Inicializar el servo exactamente en el centro (90°)
+  miServo.write(90);
+  delay(500); 
+}
+
+void loop() {
+  float distanciaActual = leerDistanciaCM();
+  int gradosServo = 90; // Por defecto inicia en el centro
+
+  // Lógica condicional con ángulos invertidos
+  if (distanciaActual > DIST_CENTRO) {
+    // Aumento de distancia (27.5 a 45) -> Servo baja de 90° a 20°
+    gradosServo = map(distanciaActual * 10, DIST_CENTRO * 10, DIST_MAX * 10, 90, 20);
+  } 
+  else if (distanciaActual < DIST_CENTRO) {
+    // Disminución de distancia (27.5 a 10) -> Servo sube de 90° a 160°
+    gradosServo = map(distanciaActual * 10, DIST_MIN * 10, DIST_CENTRO * 10, 160, 90);
+  } 
+  else {
+    gradosServo = 90; 
+  }
+
+  // Mover el servomotor a la posición calculada
+  miServo.write(gradosServo);
+
+  // Transmisión de variables en tiempo real a Teleplot
+  Serial.print(">Distancia_CM:");
+  Serial.println(distanciaActual);
+
+  Serial.print(">Angulo_Servo:");
+  Serial.println(gradosServo);
+
+  Serial.print(">Centro_Referencia:");
+  Serial.println(DIST_CENTRO);
+
+  delay(60); 
+}
